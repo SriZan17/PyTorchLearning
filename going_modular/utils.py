@@ -3,6 +3,58 @@ Contains various utility functions for PyTorch model training and saving.
 """
 import torch
 from pathlib import Path
+from torchmetrics import ConfusionMatrix
+from tqdm.auto import tqdm
+import os
+from torchvision import datasets
+
+
+def calculate_confusion_matrix(
+    class_names: list,
+    model,  # y_true: torch.Tensor, y_pred: torch.Tensor
+    test_dir: str,
+    device: str = "cuda:0" if torch.cuda.is_available() else "cpu",
+    transform=None,
+):
+    """Calculates a PyTorch confusion matrix using the ConfusionMatrix class from torchmetrics.
+
+    Args:
+      class_names: A list of class names in the order of the confusion matrix.
+      y_true: A tensor of true labels.
+      y_pred: A tensor of predicted labels.
+
+    Returns:
+      A PyTorch confusion matrix.
+    """
+
+    y_preds = []
+    test_dir = "data/pizza_steak_sushi/test"
+    test_data = datasets.ImageFolder(root=test_dir, transform=transform)
+    test_dataloader = torch.utils.data.DataLoader(
+        test_data, batch_size=32, shuffle=False, num_workers=os.cpu_count() - 1
+    )
+
+    model.eval()
+    with torch.inference_mode():
+        for X, y in tqdm(test_dataloader, desc="Making predictions"):
+            # Send data and targets to target device
+            X, y = X.to(device), y.to(device)
+            # Do the forward pass
+            y_logit = model(X)
+            # Turn predictions from logits -> prediction probabilities -> predictions labels
+            y_pred = torch.softmax(y_logit, dim=1).argmax(
+                dim=1
+            )  # note: perform softmax on the "logits" dimension, not "batch" dimension (in this case we have a batch size of 32, so can perform on dim=1)
+            # Put predictions on CPU for evaluation
+            y_preds.append(y_pred.cpu())
+    # Concatenate list of predictions into a tensor
+    y_pred_tensor = torch.cat(y_preds)
+    confmat = ConfusionMatrix(num_classes=len(class_names), task="multiclass")
+
+    confmat_tensor = confmat(
+        preds=y_pred_tensor, target=torch.tensor(test_data.targets)
+    )
+    return confmat_tensor.numpy()
 
 
 def save_model(model: torch.nn.Module, target_dir: str, model_name: str):
